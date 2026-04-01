@@ -1,6 +1,5 @@
-const { connectDB, Listing, Subscription } = require('./db');
-const { getTotalPages, findBoundary, scrapePages, classifyPage, sleep } = require('./krisha');
-const axios = require('axios');
+const { connectDB, Listing } = require('./db');
+const { getTotalPages, findBoundary, scrapePages, sleep } = require('./krisha');
 
 // ─── Конфиг ───────────────────────────────────────────────────────────────────
 
@@ -30,98 +29,6 @@ async function saveNewListings(listings) {
   return newListings;
 }
 
-// ─── Проверить фильтры юзера ──────────────────────────────────────────────────
-
-function matchesFilter(listing, filters) {
-  // Район
-  if (filters.district) {
-    if (listing.district !== filters.district) return false;
-  }
-
-  // Владелец
-  if (filters.ownerType && filters.ownerType !== 'все') {
-    if (listing.ownerType !== filters.ownerType) return false;
-  }
-
-  // Цена
-  if (filters.minPrice && listing.price !== null) {
-    if (listing.price < filters.minPrice) return false;
-  }
-  if (filters.maxPrice && listing.price !== null) {
-    if (listing.price > filters.maxPrice) return false;
-  }
-
-  // Количество комнат
-  if (filters.rooms && listing.rooms !== null) {
-    if (listing.rooms !== filters.rooms) return false;
-  }
-
-  // Тип объявления
-  if (filters.adTypes && filters.adTypes.length > 0) {
-    if (!filters.adTypes.includes(listing.adType)) return false;
-  }
-
-  return true;
-}
-
-// ─── Уведомить юзеров о новых объявлениях ─────────────────────────────────────
-
-async function notifyUsers(newListings) {
-  if (newListings.length === 0) return;
-
-  const botToken = process.env.BOT_TOKEN || '8599051611:AAEDgw3lRLVmCmyl8EHHl7zssTx1zGhStaQ';
-  const subscriptions = await Subscription.find({ active: true });
-
-  console.log(`[Notify] ${newListings.length} new listings, ${subscriptions.length} active subscriptions`);
-
-  for (const sub of subscriptions) {
-    const matching = newListings.filter(l => matchesFilter(l, sub.filters));
-
-    if (matching.length === 0) continue;
-
-    console.log(`[Notify] ${matching.length} listings match for chatId ${sub.chatId}`);
-
-    // Отправляем уведомление
-    try {
-      await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        chat_id: sub.chatId,
-        text: `🔔 Найдено *${matching.length}* новых объявлений!`,
-        parse_mode: 'Markdown',
-      });
-
-      for (const item of matching) {
-        const ownerIcon = item.ownerType === 'частник' ? '👤' : '🏢';
-        const adIcon = item.adType === 'vip' ? '⭐ VIP' : item.adType === 'top' ? '🔝 TOP' : item.adType === 'горячее' ? '🔥 Горячее' : '📄 Обычное';
-        const caption =
-          `🆕 *${item.title || 'Квартира'}*\n` +
-          `💰 ${item.priceStr || '—'}\n` +
-          `📍 ${item.address || '—'}\n` +
-          `${ownerIcon} ${item.ownerType} · ${adIcon}\n` +
-          `🔗 [Открыть объявление](${item.url})`;
-
-        if (item.photo) {
-          await axios.post(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-            chat_id: sub.chatId,
-            photo: item.photo,
-            caption,
-            parse_mode: 'Markdown',
-          });
-        } else {
-          await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            chat_id: sub.chatId,
-            text: caption,
-            parse_mode: 'Markdown',
-          });
-        }
-
-        await sleep(300);
-      }
-    } catch (err) {
-      console.error(`[Notify] Error for chatId ${sub.chatId}:`, err.message);
-    }
-  }
-}
-
 // ─── Главный цикл парсера ─────────────────────────────────────────────────────
 
 async function main() {
@@ -135,7 +42,7 @@ async function main() {
   let boundaryPage = await findBoundary(totalPages);
   console.log(`[Parser] Boundary at page ${boundaryPage}`);
 
-  // 2. Каждую минуту — парсим от (boundary - 5) до boundary, ищем новые
+  // 2. Каждую минуту — парсим от (boundary - 5) до boundary + 2, ищем новые
   async function check() {
     try {
       const fromPage = Math.max(1, boundaryPage - PAGE_BUFFER);
@@ -146,7 +53,6 @@ async function main() {
 
       if (newListings.length > 0) {
         console.log(`[Parser] Found ${newListings.length} NEW listings!`);
-        await notifyUsers(newListings);
       } else {
         console.log(`[Parser] No new listings.`);
       }

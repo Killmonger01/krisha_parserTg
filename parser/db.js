@@ -33,6 +33,7 @@ const subscriptionSchema = new mongoose.Schema({
     adTypes: { type: [String], default: [] },
   },
   active: { type: Boolean, default: true },
+  lastCheckedAt: { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now },
 });
 

@@ -1,8 +1,10 @@
 const TelegramBot = require('node-telegram-bot-api');
-const { connectDB, Subscription } = require('./db');
+const { connectDB, Listing, Subscription } = require('./db');
 
 const TOKEN = process.env.BOT_TOKEN || '8599051611:AAEDgw3lRLVmCmyl8EHHl7zssTx1zGhStaQ';
 const bot = new TelegramBot(TOKEN, { polling: true });
+
+const NOTIFY_INTERVAL = 30 * 1000; // проверяем базу каждые 30 секунд
 
 const DISTRICTS = [
   'Алатауский', 'Алмалинский', 'Ауэзовский',
@@ -19,6 +21,7 @@ function getState(chatId) {
       filters: {
         district: null,
         ownerType: 'все',
+        rooms: null,
         minPrice: null,
         maxPrice: null,
         adTypes: [],
@@ -50,31 +53,6 @@ function ownerTypeKeyboard() {
       ]
     ]
   };
-}
-
-function adTypeKeyboard(selected) {
-  const types = [
-    { label: 'VIP', icon: '⭐', key: 'vip' },
-    { label: 'TOP', icon: '🔝', key: 'top' },
-    { label: 'Горячие', icon: '🔥', key: 'горячее' },
-    { label: 'Обычные', icon: '📄', key: 'обычное' },
-  ];
-  const allSelected = selected.length === 0;
-  const rows = [];
-  for (let i = 0; i < types.length; i += 2) {
-    const row = [];
-    for (let j = i; j < i + 2 && j < types.length; j++) {
-      const t = types[j];
-      const isSelected = selected.includes(t.key);
-      row.push({ text: (isSelected ? '✅ ' : '') + t.icon + ' ' + t.label, callback_data: `adtype_${t.key}` });
-    }
-    rows.push(row);
-  }
-  rows.push([
-    { text: (allSelected ? '✅ ' : '') + '🌐 Все', callback_data: 'adtype_all' },
-    { text: '➡️ Далее', callback_data: 'adtype_done' },
-  ]);
-  return { inline_keyboard: rows };
 }
 
 function districtsKeyboard() {
@@ -133,9 +111,88 @@ function priceKeyboard() {
 async function saveSubscription(chatId, filters) {
   await Subscription.findOneAndUpdate(
     { chatId },
-    { chatId, filters, active: true },
+    { chatId, filters, active: true, lastCheckedAt: new Date() },
     { upsert: true, new: true }
   );
+}
+
+// ─── Проверить фильтры юзера ──────────────────────────────────────────────────
+
+function matchesFilter(listing, filters) {
+  if (filters.district) {
+    if (listing.district !== filters.district) return false;
+  }
+
+  if (filters.ownerType && filters.ownerType !== 'все') {
+    if (listing.ownerType !== filters.ownerType) return false;
+  }
+
+  if (filters.minPrice && listing.price !== null) {
+    if (listing.price < filters.minPrice) return false;
+  }
+  if (filters.maxPrice && listing.price !== null) {
+    if (listing.price > filters.maxPrice) return false;
+  }
+
+  if (filters.rooms && listing.rooms !== null) {
+    if (listing.rooms !== filters.rooms) return false;
+  }
+
+  return true;
+}
+
+// ─── Проверка новых объявлений и уведомление подписчиков ──────────────────────
+
+async function checkAndNotify() {
+  try {
+    const subscriptions = await Subscription.find({ active: true });
+    if (subscriptions.length === 0) return;
+
+    for (const sub of subscriptions) {
+      // Берём объявления добавленные после последней проверки этого юзера
+      const lastChecked = sub.lastCheckedAt || sub.createdAt;
+      const newListings = await Listing.find({ createdAt: { $gt: lastChecked } });
+
+      if (newListings.length === 0) continue;
+
+      // Фильтруем по подписке юзера
+      const matching = newListings.filter(l => matchesFilter(l, sub.filters));
+
+      if (matching.length > 0) {
+        console.log(`[Notify] ${matching.length} listings match for chatId ${sub.chatId}`);
+
+        try {
+          await bot.sendMessage(sub.chatId, `🔔 Найдено *${matching.length}* новых объявлений!`, { parse_mode: 'Markdown' });
+
+          for (const item of matching) {
+            const ownerIcon = item.ownerType === 'частник' ? '👤' : '🏢';
+            const adIcon = item.adType === 'vip' ? '⭐ VIP' : item.adType === 'top' ? '🔝 TOP' : item.adType === 'горячее' ? '🔥 Горячее' : '📄 Обычное';
+            const caption =
+              `🆕 *${item.title || 'Квартира'}*\n` +
+              `💰 ${item.priceStr || '—'}\n` +
+              `📍 ${item.address || '—'}\n` +
+              `${ownerIcon} ${item.ownerType} · ${adIcon}\n` +
+              `🔗 [Открыть объявление](${item.url})`;
+
+            if (item.photo) {
+              await bot.sendPhoto(sub.chatId, item.photo, { caption, parse_mode: 'Markdown' });
+            } else {
+              await bot.sendMessage(sub.chatId, caption, { parse_mode: 'Markdown' });
+            }
+
+            await new Promise(r => setTimeout(r, 300));
+          }
+        } catch (err) {
+          console.error(`[Notify] Error for chatId ${sub.chatId}:`, err.message);
+        }
+      }
+
+      // Обновляем время последней проверки
+      await Subscription.updateOne({ _id: sub._id }, { lastCheckedAt: new Date() });
+    }
+  } catch (err) {
+    console.error(`[Notify] Error:`, err.message);
+  }
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -297,6 +354,10 @@ bot.on('message', async (msg) => {
 async function main() {
   await connectDB();
   console.log('🤖 Бот запущен...');
+
+  // Запускаем проверку новых объявлений каждые 30 секунд
+  setInterval(checkAndNotify, NOTIFY_INTERVAL);
+  console.log(`[Bot] Checking for new listings every ${NOTIFY_INTERVAL / 1000}s...`);
 }
 
 main().catch(err => {
