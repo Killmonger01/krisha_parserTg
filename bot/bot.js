@@ -6,12 +6,6 @@ const bot = new TelegramBot(TOKEN, { polling: true });
 
 const NOTIFY_INTERVAL = 30 * 1000; // проверяем базу каждые 30 секунд
 
-const DISTRICTS = [
-  'Алатауский', 'Алмалинский', 'Ауэзовский',
-  'Бостандыкский', 'Жетысуский', 'Медеуский',
-  'Наурызбайский', 'Турксибский'
-];
-
 const userState = {};
 
 function getState(chatId) {
