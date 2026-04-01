@@ -1,4 +1,4 @@
-const { connectDB, Listing, Subscription } = require('./shared/db');
+const { connectDB, Listing, Subscription } = require('./db');
 const { getTotalPages, findBoundary, scrapePages, classifyPage, sleep } = require('./krisha');
 const axios = require('axios');
 

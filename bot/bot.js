@@ -1,5 +1,5 @@
 const TelegramBot = require('node-telegram-bot-api');
-const { connectDB, Subscription } = require('./shared/db');
+const { connectDB, Subscription } = require('./db');
 
 const TOKEN = process.env.BOT_TOKEN || '8599051611:AAEDgw3lRLVmCmyl8EHHl7zssTx1zGhStaQ';
 const bot = new TelegramBot(TOKEN, { polling: true });
