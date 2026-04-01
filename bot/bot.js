@@ -1,10 +1,13 @@
 const TelegramBot = require('node-telegram-bot-api');
-const { connectDB, Listing, Subscription } = require('./db');
+const express = require('express');
+const { connectDB, Listing, Subscription, District } = require('./db');
 
 const TOKEN = process.env.BOT_TOKEN;
-const bot = new TelegramBot(TOKEN, { polling: true });
+const PORT = process.env.PORT || 3000;
 
-const NOTIFY_INTERVAL = 30 * 1000; // проверяем базу каждые 30 секунд
+const bot = new TelegramBot(TOKEN, { polling: true });
+const app = express();
+app.use(express.json());
 
 const userState = {};
 
@@ -49,12 +52,13 @@ function ownerTypeKeyboard() {
   };
 }
 
-function districtsKeyboard() {
+async function districtsKeyboard() {
+  const districts = await District.find().sort({ name: 1 });
   const rows = [];
-  for (let i = 0; i < DISTRICTS.length; i += 2) {
+  for (let i = 0; i < districts.length; i += 2) {
     const row = [];
-    for (let j = i; j < i + 2 && j < DISTRICTS.length; j++) {
-      row.push({ text: DISTRICTS[j], callback_data: `district_${DISTRICTS[j]}` });
+    for (let j = i; j < i + 2 && j < districts.length; j++) {
+      row.push({ text: districts[j].name, callback_data: `district_${districts[j].name}` });
     }
     rows.push(row);
   }
@@ -105,7 +109,7 @@ function priceKeyboard() {
 async function saveSubscription(chatId, filters) {
   await Subscription.findOneAndUpdate(
     { chatId },
-    { chatId, filters, active: true, lastCheckedAt: new Date() },
+    { chatId, filters, active: true },
     { upsert: true, new: true }
   );
 }
@@ -135,61 +139,67 @@ function matchesFilter(listing, filters) {
   return true;
 }
 
-// ─── Проверка новых объявлений и уведомление подписчиков ──────────────────────
+// ─── API эндпоинт для парсера ─────────────────────────────────────────────────
 
-async function checkAndNotify() {
+app.post('/new-listings', async (req, res) => {
   try {
+    const { listingIds } = req.body;
+    if (!listingIds || listingIds.length === 0) {
+      return res.json({ ok: true, notified: 0 });
+    }
+
+    console.log(`[API] Received ${listingIds.length} new listing IDs from parser`);
+
+    // Достаём объявления из базы
+    const listings = await Listing.find({ _id: { $in: listingIds } });
+
+    // Достаём активные подписки
     const subscriptions = await Subscription.find({ active: true });
-    if (subscriptions.length === 0) return;
+
+    let totalNotified = 0;
 
     for (const sub of subscriptions) {
-      // Берём объявления добавленные после последней проверки этого юзера
-      const lastChecked = sub.lastCheckedAt || sub.createdAt;
-      const newListings = await Listing.find({ createdAt: { $gt: lastChecked } });
+      const matching = listings.filter(l => matchesFilter(l, sub.filters));
 
-      if (newListings.length === 0) continue;
+      if (matching.length === 0) continue;
 
-      // Фильтруем по подписке юзера
-      const matching = newListings.filter(l => matchesFilter(l, sub.filters));
+      console.log(`[Notify] ${matching.length} listings match for chatId ${sub.chatId}`);
+      totalNotified += matching.length;
 
-      if (matching.length > 0) {
-        console.log(`[Notify] ${matching.length} listings match for chatId ${sub.chatId}`);
+      try {
+        await bot.sendMessage(sub.chatId, `🔔 Найдено *${matching.length}* новых объявлений!`, { parse_mode: 'Markdown' });
 
-        try {
-          await bot.sendMessage(sub.chatId, `🔔 Найдено *${matching.length}* новых объявлений!`, { parse_mode: 'Markdown' });
+        for (const item of matching) {
+          const ownerIcon = item.ownerType === 'частник' ? '👤' : '🏢';
+          const adIcon = item.adType === 'vip' ? '⭐ VIP' : item.adType === 'top' ? '🔝 TOP' : item.adType === 'горячее' ? '🔥 Горячее' : '📄 Обычное';
+          const caption =
+            `🆕 *${item.title || 'Квартира'}*\n` +
+            `💰 ${item.priceStr || '—'}\n` +
+            `📍 ${item.address || '—'}\n` +
+            `${ownerIcon} ${item.ownerType} · ${adIcon}\n` +
+            `🔗 [Открыть объявление](${item.url})`;
 
-          for (const item of matching) {
-            const ownerIcon = item.ownerType === 'частник' ? '👤' : '🏢';
-            const adIcon = item.adType === 'vip' ? '⭐ VIP' : item.adType === 'top' ? '🔝 TOP' : item.adType === 'горячее' ? '🔥 Горячее' : '📄 Обычное';
-            const caption =
-              `🆕 *${item.title || 'Квартира'}*\n` +
-              `💰 ${item.priceStr || '—'}\n` +
-              `📍 ${item.address || '—'}\n` +
-              `${ownerIcon} ${item.ownerType} · ${adIcon}\n` +
-              `🔗 [Открыть объявление](${item.url})`;
-
-            if (item.photo) {
-              await bot.sendPhoto(sub.chatId, item.photo, { caption, parse_mode: 'Markdown' });
-            } else {
-              await bot.sendMessage(sub.chatId, caption, { parse_mode: 'Markdown' });
-            }
-
-            await new Promise(r => setTimeout(r, 300));
+          if (item.photo) {
+            await bot.sendPhoto(sub.chatId, item.photo, { caption, parse_mode: 'Markdown' });
+          } else {
+            await bot.sendMessage(sub.chatId, caption, { parse_mode: 'Markdown' });
           }
-        } catch (err) {
-          console.error(`[Notify] Error for chatId ${sub.chatId}:`, err.message);
+
+          await new Promise(r => setTimeout(r, 300));
         }
+      } catch (err) {
+        console.error(`[Notify] Error for chatId ${sub.chatId}:`, err.message);
       }
-
-      // Обновляем время последней проверки
-      await Subscription.updateOne({ _id: sub._id }, { lastCheckedAt: new Date() });
     }
-  } catch (err) {
-    console.error(`[Notify] Error:`, err.message);
-  }
-}
 
-// ─── Handlers ─────────────────────────────────────────────────────────────────
+    res.json({ ok: true, notified: totalNotified });
+  } catch (err) {
+    console.error(`[API] Error:`, err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ─── Telegram Handlers ───────────────────────────────────────────────────────
 
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
@@ -208,8 +218,6 @@ bot.on('callback_query', async (query) => {
   const state = getState(chatId);
 
   bot.answerCallbackQuery(query.id);
-
-  // ─── Главное меню ───────────────────────────────────────────────────────
 
   if (data === 'start_subscribe') {
     state.step = 'awaiting_owner';
@@ -241,12 +249,10 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ─── Настройка фильтров ─────────────────────────────────────────────────
-
   if (data.startsWith('owner_')) {
     state.filters.ownerType = data.replace('owner_', '');
     state.step = 'awaiting_district';
-    bot.sendMessage(chatId, '🗺 Выбери район:', { reply_markup: districtsKeyboard() });
+    bot.sendMessage(chatId, '🗺 Выбери район:', { reply_markup: await districtsKeyboard() });
     return;
   }
 
@@ -292,7 +298,6 @@ bot.on('callback_query', async (query) => {
       state.filters.maxPrice = parseInt(parts[1]) || null;
     }
 
-    // Сохраняем подписку
     await saveSubscription(chatId, state.filters);
     state.step = 'idle';
 
@@ -347,11 +352,12 @@ bot.on('message', async (msg) => {
 
 async function main() {
   await connectDB();
-  console.log('🤖 Бот запущен...');
 
-  // Запускаем проверку новых объявлений каждые 30 секунд
-  setInterval(checkAndNotify, NOTIFY_INTERVAL);
-  console.log(`[Bot] Checking for new listings every ${NOTIFY_INTERVAL / 1000}s...`);
+  app.listen(PORT, () => {
+    console.log(`[API] Listening on port ${PORT}`);
+  });
+
+  console.log('🤖 Бот запущен...');
 }
 
 main().catch(err => {
