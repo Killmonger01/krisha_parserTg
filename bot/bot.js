@@ -1,6 +1,6 @@
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
-const { connectDB, Listing, Subscription, District } = require('./db');
+const { connectDB, Subscription, District } = require('./db');
 
 const TOKEN = process.env.BOT_TOKEN;
 const PORT = process.env.PORT || 3000;
@@ -139,21 +139,18 @@ function matchesFilter(listing, filters) {
   return true;
 }
 
-// ─── API эндпоинт для парсера ─────────────────────────────────────────────────
+// ─── API эндпоинт — принимает объявления от парсера ───────────────────────────
 
 app.post('/new-listings', async (req, res) => {
   try {
-    const { listingIds } = req.body;
-    if (!listingIds || listingIds.length === 0) {
+    const { listings } = req.body;
+    if (!listings || listings.length === 0) {
       return res.json({ ok: true, notified: 0 });
     }
 
-    console.log(`[API] Received ${listingIds.length} new listing IDs from parser`);
+    console.log(`[API] Received ${listings.length} new listings from parser`);
 
-    // Достаём объявления из базы
-    const listings = await Listing.find({ _id: { $in: listingIds } });
-
-    // Достаём активные подписки
+    // Достаём подписки из базы
     const subscriptions = await Subscription.find({ active: true });
 
     let totalNotified = 0;

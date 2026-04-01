@@ -6,7 +6,7 @@ const axios = require('axios');
 
 const CHECK_INTERVAL = 60 * 1000;
 const PAGE_BUFFER = 5;
-const BOT_URL = process.env.BOT_URL;
+const BOT_URL = process.env.BOT_URL || 'http://krisha_bot:3000';
 
 // ─── Сохранить новые объявления в БД ──────────────────────────────────────────
 
@@ -30,13 +30,12 @@ async function saveNewListings(listings) {
   return newListings;
 }
 
-// ─── Уведомить бота о новых объявлениях ───────────────────────────────────────
+// ─── Отправить объявления боту ────────────────────────────────────────────────
 
 async function notifyBot(newListings) {
   try {
-    const ids = newListings.map(l => l._id.toString());
-    await axios.post(`${BOT_URL}/new-listings`, { listingIds: ids });
-    console.log(`[Parser] Sent ${ids.length} listing IDs to bot`);
+    await axios.post(`${BOT_URL}/new-listings`, { listings: newListings });
+    console.log(`[Parser] Sent ${newListings.length} listings to bot`);
   } catch (err) {
     console.error(`[Parser] Failed to notify bot:`, err.message);
   }
