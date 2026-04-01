@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { District } = require('./db');
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15',
@@ -21,18 +22,23 @@ function cleanText(str) {
     .trim();
 }
 
-// ─── Районы для определения из адреса ─────────────────────────────────────────
+// ─── Определение района из адреса (берёт районы из базы) ──────────────────────
 
-const DISTRICTS = [
-  'Алатауский', 'Алмалинский', 'Ауэзовский',
-  'Бостандыкский', 'Жетысуский', 'Медеуский',
-  'Наурызбайский', 'Турксибский'
-];
+let cachedDistricts = null;
 
-function detectDistrict(address) {
+async function getDistricts() {
+  if (!cachedDistricts) {
+    const docs = await District.find();
+    cachedDistricts = docs.map(d => d.name);
+  }
+  return cachedDistricts;
+}
+
+async function detectDistrict(address) {
   if (!address) return null;
+  const districts = await getDistricts();
   const lower = address.toLowerCase();
-  for (const d of DISTRICTS) {
+  for (const d of districts) {
     if (lower.includes(d.toLowerCase())) return d;
   }
   return null;
@@ -54,7 +60,7 @@ async function fetchPage(page = 1) {
 
 // ─── Парсинг объявлений ───────────────────────────────────────────────────────
 
-function parseListings(html) {
+async function parseListings(html) {
   const listings = [];
   const cardRegex = /<div[^>]+class="a-card a-storage-live[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>\s*<\/div>\s*<\/div>/g;
   let match;
@@ -78,14 +84,12 @@ function parseListings(html) {
     const imgMatch = block.match(/(?:src|data-src)="(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i);
     if (imgMatch) listing.photo = imgMatch[1];
 
-    // Тип владельца
     if (block.includes('user-specialist') || block.includes('user-label-identified-specialist')) {
       listing.ownerType = 'агент';
     } else {
       listing.ownerType = 'частник';
     }
 
-    // Тип объявления
     if (block.includes('common-b vip')) {
       listing.adType = 'vip';
     } else if (block.includes('topb')) {
@@ -98,16 +102,13 @@ function parseListings(html) {
 
     listing.isPaid = listing.adType !== 'обычное';
 
-    // Цена числом
     if (listing.priceStr) {
       const num = parseInt(listing.priceStr.replace(/\D/g, ''));
       listing.price = isNaN(num) ? null : num;
     }
 
-    // Район из адреса
-    listing.district = detectDistrict(listing.address);
+    listing.district = await detectDistrict(listing.address);
 
-    // Количество комнат из title (например "2-комнатная квартира")
     if (listing.title) {
       const roomsMatch = listing.title.match(/(\d+)-комн/);
       listing.rooms = roomsMatch ? parseInt(roomsMatch[1]) : null;
@@ -148,7 +149,7 @@ async function getTotalPages() {
 
 async function classifyPage(page) {
   const html = await fetchPage(page);
-  const listings = parseListings(html);
+  const listings = await parseListings(html);
 
   if (listings.length === 0) {
     return { type: 'empty', listings: [] };
@@ -203,7 +204,7 @@ async function scrapePages(fromPage, toPage) {
   for (let page = fromPage; page <= toPage; page++) {
     try {
       const html = await fetchPage(page);
-      const listings = parseListings(html);
+      const listings = await parseListings(html);
 
       if (listings.length === 0) {
         console.log(`  Page ${page}: empty, stopping.`);
