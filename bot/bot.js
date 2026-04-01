@@ -1,7 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const { connectDB, Listing, Subscription } = require('./db');
 
-const TOKEN = process.env.BOT_TOKEN || '8599051611:AAEDgw3lRLVmCmyl8EHHl7zssTx1zGhStaQ';
+const TOKEN = process.env.BOT_TOKEN;
 const bot = new TelegramBot(TOKEN, { polling: true });
 
 const NOTIFY_INTERVAL = 30 * 1000; // проверяем базу каждые 30 секунд
