@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  parser:
+    build:
+      context: .
+      dockerfile: parser/Dockerfile
+    container_name: krisha_parser
+    restart: always
+    environment:
+      - MONGO_URL=mongodb+srv://admin2:ucPzEQBe2JihYBBp@cluster0.gy38jf2.mongodb.net/krisha?retryWrites=true&w=majority
+      - BOT_TOKEN=8599051611:AAEDgw3lRLVmCmyl8EHHl7zssTx1zGhStaQ
+
+  bot:
+    build:
+      context: .
+      dockerfile: bot/Dockerfile
+    container_name: krisha_bot
+    restart: always
+    environment:
+      - MONGO_URL=mongodb+srv://admin2:ucPzEQBe2JihYBBp@cluster0.gy38jf2.mongodb.net/krisha?retryWrites=true&w=majority
+      - BOT_TOKEN=8599051611:AAEDgw3lRLVmCmyl8EHHl7zssTx1zGhStaQ
