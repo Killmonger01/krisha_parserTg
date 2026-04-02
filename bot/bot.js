@@ -70,7 +70,8 @@ async function districtsKeyboard() {
 
 function roomsKeyboard(selected = []) {
   function label(r) {
-    return selected.includes(r) ? `✅ ${r}к` : `${r}к`;
+    const display = r === 6 ? '6+' : String(r);
+    return selected.includes(r) ? `✅ ${display}` : display;
   }
 
   return {
@@ -118,6 +119,13 @@ function priceKeyboard() {
   };
 }
 
+// ─── Форматирование комнат для текста ─────────────────────────────────────────
+
+function formatRooms(rooms) {
+  if (!rooms || rooms.length === 0) return 'любое';
+  return rooms.sort((a, b) => a - b).map(r => r === 6 ? '6+' : String(r)).join(', ');
+}
+
 // ─── Сохранить подписку в БД ──────────────────────────────────────────────────
 
 async function saveSubscription(chatId, filters) {
@@ -146,9 +154,13 @@ function matchesFilter(listing, filters) {
     if (listing.price > filters.maxPrice) return false;
   }
 
-  // Мультивыбор комнат
+  // Мультивыбор комнат (6 означает 6+)
   if (filters.rooms && filters.rooms.length > 0 && listing.rooms !== null) {
-    if (!filters.rooms.includes(listing.rooms)) return false;
+    const matches = filters.rooms.some(r => {
+      if (r === 6) return listing.rooms >= 6;
+      return listing.rooms === r;
+    });
+    if (!matches) return false;
   }
 
   return true;
@@ -252,14 +264,11 @@ bot.on('callback_query', async (query) => {
       return;
     }
     const f = sub.filters;
-    const roomsText = (f.rooms && f.rooms.length > 0)
-      ? f.rooms.sort((a, b) => a - b).map(r => `${r}к`).join(', ')
-      : 'любое';
     const text =
       `📋 *Твои фильтры:*\n\n` +
       `🗺 Район: ${f.district || 'все'}\n` +
       `👤 Владелец: ${f.ownerType}\n` +
-      `🛏 Комнат: ${roomsText}\n` +
+      `🛏 Комнат: ${formatRooms(f.rooms)}\n` +
       `💰 Цена: ${f.minPrice || '—'} – ${f.maxPrice || '—'} 〒`;
     bot.sendMessage(chatId, text, { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() });
     return;
@@ -299,12 +308,11 @@ bot.on('callback_query', async (query) => {
     const rooms = state.filters.rooms || [];
 
     if (rooms.includes(num)) {
-      state.filters.rooms = rooms.filter(r => r !== num); // снять
+      state.filters.rooms = rooms.filter(r => r !== num);
     } else {
-      state.filters.rooms = [...rooms, num]; // добавить
+      state.filters.rooms = [...rooms, num];
     }
 
-    // Обновить клавиатуру без нового сообщения
     bot.editMessageReplyMarkup(
       roomsKeyboard(state.filters.rooms),
       { chat_id: chatId, message_id: query.message.message_id }
@@ -349,15 +357,12 @@ bot.on('callback_query', async (query) => {
     state.step = 'idle';
 
     const f = state.filters;
-    const roomsText = (f.rooms && f.rooms.length > 0)
-      ? f.rooms.sort((a, b) => a - b).map(r => `${r}к`).join(', ')
-      : 'любое';
 
     bot.sendMessage(chatId,
       `✅ *Подписка активирована!*\n\n` +
       `🗺 Район: ${f.district || 'все'}\n` +
       `👤 Владелец: ${f.ownerType}\n` +
-      `🛏 Комнат: ${roomsText}\n` +
+      `🛏 Комнат: ${formatRooms(f.rooms)}\n` +
       `💰 Цена: ${f.minPrice || '—'} – ${f.maxPrice || '—'} 〒\n\n` +
       `Как только появится новое объявление — пришлю.`,
       { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() }
@@ -371,7 +376,6 @@ bot.on('message', async (msg) => {
   const text = msg.text;
   if (!text || text.startsWith('/')) return;
 
-  // Обработка кнопки "Главное меню"
   if (text === 'Главное меню') {
     userState[chatId] = null;
     bot.sendMessage(chatId,
@@ -399,15 +403,12 @@ bot.on('message', async (msg) => {
     state.step = 'idle';
 
     const f = state.filters;
-    const roomsText = (f.rooms && f.rooms.length > 0)
-      ? f.rooms.sort((a, b) => a - b).map(r => `${r}к`).join(', ')
-      : 'любое';
 
     bot.sendMessage(chatId,
       `✅ *Подписка активирована!*\n\n` +
       `🗺 Район: ${f.district || 'все'}\n` +
       `👤 Владелец: ${f.ownerType}\n` +
-      `🛏 Комнат: ${roomsText}\n` +
+      `🛏 Комнат: ${formatRooms(f.rooms)}\n` +
       `💰 Цена: ${f.minPrice || '—'} – ${f.maxPrice || '—'} 〒\n\n` +
       `Как только появится новое объявление — пришлю.`,
       { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() }
