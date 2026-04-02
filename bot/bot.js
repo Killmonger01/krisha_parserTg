@@ -331,7 +331,7 @@ bot.on('callback_query', async (query) => {
   }
 
   if (data === 'rooms_any') {
-    state.filters.rooms = null;
+    state.filters.rooms = [];
     state.step = 'awaiting_price';
     bot.sendMessage(chatId, '💰 Выбери диапазон цены:', { reply_markup: priceKeyboard() });
     return;
