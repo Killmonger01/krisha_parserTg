@@ -202,19 +202,19 @@ bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   userState[chatId] = null;
 
-  // Reply клавиатура — всегда видна внизу экрана
-  bot.sendMessage(chatId, '🏠', {
-    reply_markup: {
-      keyboard: [[{ text: '/start' }]],
-      resize_keyboard: true,
-    }
-  });
-
   bot.sendMessage(chatId,
     '🏠 *Krisha Parser Bot*\n\n' +
     'Подпишись на фильтры — бот будет присылать новые объявления аренды в Алматы в реальном времени.',
-    { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() }
-  );
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        keyboard: [[{ text: '/start' }]],
+        resize_keyboard: true,
+      }
+    }
+  ).then(() => {
+    bot.sendMessage(chatId, 'Выбери действие:', { reply_markup: mainMenuKeyboard() });
+  });
 });
 
 bot.on('callback_query', async (query) => {
