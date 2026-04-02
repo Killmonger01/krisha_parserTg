@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
 
 // ─── Схема объявления ─────────────────────────────────────────────────────────
-
 const listingSchema = new mongoose.Schema({
   url: { type: String, required: true, unique: true, index: true },
   title: String,
@@ -18,7 +17,6 @@ const listingSchema = new mongoose.Schema({
 });
 
 // ─── Схема подписки юзера ─────────────────────────────────────────────────────
-
 const subscriptionSchema = new mongoose.Schema({
   chatId: { type: Number, required: true, unique: true, index: true },
   mode: { type: String, default: 'monthly' },
@@ -29,7 +27,7 @@ const subscriptionSchema = new mongoose.Schema({
     ownerType: { type: String, default: 'все' },
     minPrice: { type: Number, default: null },
     maxPrice: { type: Number, default: null },
-    rooms: { type: Number, default: null },
+    rooms: { type: [Number], default: [] },  // массив комнат (пустой = любое)
     adTypes: { type: [String], default: [] },
   },
   active: { type: Boolean, default: true },
@@ -38,7 +36,6 @@ const subscriptionSchema = new mongoose.Schema({
 });
 
 // ─── Схема района ─────────────────────────────────────────────────────────────
-
 const districtSchema = new mongoose.Schema({
   name: { type: String, required: true, unique: true },
 });
@@ -48,7 +45,6 @@ const Subscription = mongoose.model('Subscription', subscriptionSchema);
 const District = mongoose.model('District', districtSchema);
 
 // ─── Начальные районы (заполняются при первом запуске) ─────────────────────────
-
 const DEFAULT_DISTRICTS = [
   'Алатауский', 'Алмалинский', 'Ауэзовский',
   'Бостандыкский', 'Жетысуский', 'Медеуский',
@@ -64,7 +60,6 @@ async function seedDistricts() {
 }
 
 // ─── Подключение ──────────────────────────────────────────────────────────────
-
 async function connectDB() {
   const url = process.env.MONGO_URL || 'mongodb://localhost:27017/krisha';
   await mongoose.connect(url);
