@@ -18,7 +18,7 @@ function getState(chatId) {
       filters: {
         district: null,
         ownerType: 'все',
-        rooms: null,
+        rooms: [],
         minPrice: null,
         maxPrice: null,
         adTypes: [],
@@ -66,17 +66,31 @@ async function districtsKeyboard() {
   return { inline_keyboard: rows };
 }
 
-function roomsKeyboard() {
+// ─── Клавиатура комнат с мультивыбором ───────────────────────────────────────
+
+function roomsKeyboard(selected = []) {
+  function label(r) {
+    return selected.includes(r) ? `✅ ${r}к` : `${r}к`;
+  }
+
   return {
     inline_keyboard: [
       [
-        { text: '1', callback_data: 'rooms_1' },
-        { text: '2', callback_data: 'rooms_2' },
-        { text: '3', callback_data: 'rooms_3' },
-        { text: '4', callback_data: 'rooms_4' },
-        { text: '5+', callback_data: 'rooms_5' },
+        { text: label(1), callback_data: 'rooms_toggle_1' },
+        { text: label(2), callback_data: 'rooms_toggle_2' },
       ],
-      [{ text: '🌐 Любое', callback_data: 'rooms_any' }],
+      [
+        { text: label(3), callback_data: 'rooms_toggle_3' },
+        { text: label(4), callback_data: 'rooms_toggle_4' },
+      ],
+      [
+        { text: label(5), callback_data: 'rooms_toggle_5' },
+        { text: label(6), callback_data: 'rooms_toggle_6' },
+      ],
+      [
+        { text: '✔️ Готово', callback_data: 'rooms_done' },
+        { text: '🌐 Любое', callback_data: 'rooms_any' },
+      ],
     ]
   };
 }
@@ -132,8 +146,9 @@ function matchesFilter(listing, filters) {
     if (listing.price > filters.maxPrice) return false;
   }
 
-  if (filters.rooms && listing.rooms !== null) {
-    if (listing.rooms !== filters.rooms) return false;
+  // Мультивыбор комнат
+  if (filters.rooms && filters.rooms.length > 0 && listing.rooms !== null) {
+    if (!filters.rooms.includes(listing.rooms)) return false;
   }
 
   return true;
@@ -150,7 +165,6 @@ app.post('/new-listings', async (req, res) => {
 
     console.log(`[API] Received ${listings.length} new listings from parser`);
 
-    // Достаём подписки из базы
     const subscriptions = await Subscription.find({ active: true });
 
     let totalNotified = 0;
@@ -208,7 +222,7 @@ bot.onText(/\/start/, (msg) => {
     {
       parse_mode: 'Markdown',
       reply_markup: {
-        keyboard: [[{ text: '/start' }]],
+        keyboard: [[{ text: 'Главное меню' }]],
         resize_keyboard: true,
       }
     }
@@ -226,7 +240,7 @@ bot.on('callback_query', async (query) => {
 
   if (data === 'start_subscribe') {
     state.step = 'awaiting_owner';
-    state.filters = { district: null, ownerType: 'все', rooms: null, minPrice: null, maxPrice: null, adTypes: [] };
+    state.filters = { district: null, ownerType: 'все', rooms: [], minPrice: null, maxPrice: null, adTypes: [] };
     bot.sendMessage(chatId, '👤 Кто сдаёт квартиру?', { reply_markup: ownerTypeKeyboard() });
     return;
   }
@@ -238,11 +252,14 @@ bot.on('callback_query', async (query) => {
       return;
     }
     const f = sub.filters;
+    const roomsText = (f.rooms && f.rooms.length > 0)
+      ? f.rooms.sort((a, b) => a - b).map(r => `${r}к`).join(', ')
+      : 'любое';
     const text =
       `📋 *Твои фильтры:*\n\n` +
       `🗺 Район: ${f.district || 'все'}\n` +
       `👤 Владелец: ${f.ownerType}\n` +
-      `🛏 Комнат: ${f.rooms || 'любое'}\n` +
+      `🛏 Комнат: ${roomsText}\n` +
       `💰 Цена: ${f.minPrice || '—'} – ${f.maxPrice || '—'} 〒`;
     bot.sendMessage(chatId, text, { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() });
     return;
@@ -264,14 +281,44 @@ bot.on('callback_query', async (query) => {
   if (data === 'district_all') {
     state.filters.district = null;
     state.step = 'awaiting_rooms';
-    bot.sendMessage(chatId, '🛏 Сколько комнат?', { reply_markup: roomsKeyboard() });
+    bot.sendMessage(chatId, '🛏 Сколько комнат? (можно выбрать несколько)', { reply_markup: roomsKeyboard([]) });
     return;
   }
 
   if (data.startsWith('district_')) {
     state.filters.district = data.replace('district_', '');
     state.step = 'awaiting_rooms';
-    bot.sendMessage(chatId, '🛏 Сколько комнат?', { reply_markup: roomsKeyboard() });
+    bot.sendMessage(chatId, '🛏 Сколько комнат? (можно выбрать несколько)', { reply_markup: roomsKeyboard([]) });
+    return;
+  }
+
+  // ─── Мультивыбор комнат ───────────────────────────────────────────────────
+
+  if (data.startsWith('rooms_toggle_')) {
+    const num = parseInt(data.replace('rooms_toggle_', ''));
+    const rooms = state.filters.rooms || [];
+
+    if (rooms.includes(num)) {
+      state.filters.rooms = rooms.filter(r => r !== num); // снять
+    } else {
+      state.filters.rooms = [...rooms, num]; // добавить
+    }
+
+    // Обновить клавиатуру без нового сообщения
+    bot.editMessageReplyMarkup(
+      roomsKeyboard(state.filters.rooms),
+      { chat_id: chatId, message_id: query.message.message_id }
+    );
+    return;
+  }
+
+  if (data === 'rooms_done') {
+    if (!state.filters.rooms || state.filters.rooms.length === 0) {
+      bot.answerCallbackQuery(query.id, { text: '⚠️ Выбери хотя бы одну комнату или нажми "Любое"', show_alert: true });
+      return;
+    }
+    state.step = 'awaiting_price';
+    bot.sendMessage(chatId, '💰 Выбери диапазон цены:', { reply_markup: priceKeyboard() });
     return;
   }
 
@@ -282,12 +329,7 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  if (data.startsWith('rooms_')) {
-    state.filters.rooms = parseInt(data.replace('rooms_', ''));
-    state.step = 'awaiting_price';
-    bot.sendMessage(chatId, '💰 Выбери диапазон цены:', { reply_markup: priceKeyboard() });
-    return;
-  }
+  // ─── Цена ─────────────────────────────────────────────────────────────────
 
   if (data.startsWith('price_')) {
     if (data === 'price_any') {
@@ -307,11 +349,15 @@ bot.on('callback_query', async (query) => {
     state.step = 'idle';
 
     const f = state.filters;
+    const roomsText = (f.rooms && f.rooms.length > 0)
+      ? f.rooms.sort((a, b) => a - b).map(r => `${r}к`).join(', ')
+      : 'любое';
+
     bot.sendMessage(chatId,
       `✅ *Подписка активирована!*\n\n` +
       `🗺 Район: ${f.district || 'все'}\n` +
       `👤 Владелец: ${f.ownerType}\n` +
-      `🛏 Комнат: ${f.rooms || 'любое'}\n` +
+      `🛏 Комнат: ${roomsText}\n` +
       `💰 Цена: ${f.minPrice || '—'} – ${f.maxPrice || '—'} 〒\n\n` +
       `Как только появится новое объявление — пришлю.`,
       { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() }
@@ -324,6 +370,19 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
   if (!text || text.startsWith('/')) return;
+
+  // Обработка кнопки "Главное меню"
+  if (text === 'Главное меню') {
+    userState[chatId] = null;
+    bot.sendMessage(chatId,
+      '🏠 *Krisha Parser Bot*\n\n' +
+      'Подпишись на фильтры — бот будет присылать новые объявления аренды в Алматы в реальном времени.',
+      { parse_mode: 'Markdown' }
+    ).then(() => {
+      bot.sendMessage(chatId, 'Выбери действие:', { reply_markup: mainMenuKeyboard() });
+    });
+    return;
+  }
 
   const state = getState(chatId);
 
@@ -340,11 +399,15 @@ bot.on('message', async (msg) => {
     state.step = 'idle';
 
     const f = state.filters;
+    const roomsText = (f.rooms && f.rooms.length > 0)
+      ? f.rooms.sort((a, b) => a - b).map(r => `${r}к`).join(', ')
+      : 'любое';
+
     bot.sendMessage(chatId,
       `✅ *Подписка активирована!*\n\n` +
       `🗺 Район: ${f.district || 'все'}\n` +
       `👤 Владелец: ${f.ownerType}\n` +
-      `🛏 Комнат: ${f.rooms || 'любое'}\n` +
+      `🛏 Комнат: ${roomsText}\n` +
       `💰 Цена: ${f.minPrice || '—'} – ${f.maxPrice || '—'} 〒\n\n` +
       `Как только появится новое объявление — пришлю.`,
       { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() }
